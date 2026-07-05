@@ -4,10 +4,10 @@ KWin CTM Monitor is a local package builder and update service for a patched
 version of KWin. The patched KWin adds user-configurable color transformation
 matrices to KDE Plasma's Wayland session.
 
-The short version: under X11, `xrandr` can change a monitor's color
-transformation matrix. Under Plasma Wayland, KWin owns that part of the display
-pipeline and does not provide an equivalent user-facing control. A normal
-Wayland application cannot work around that. KWin itself has to support it.
+Under X11, `xrandr` can change a monitor's color transformation matrix. Under
+Plasma Wayland, KWin owns that part of the display pipeline and does not provide
+an equivalent user-facing control. A normal Wayland application cannot work
+around that. KWin itself has to support it.
 
 The repository carries the required KWin patch. When KDE neon updates KWin,
 the monitor rebuilds a matching set of patched `.deb` packages and publishes
@@ -15,20 +15,17 @@ them to a signed APT repo on the local machine.
 
 ## Components
 
-There are three pieces. They are related, but they do different jobs.
-
 | Piece | What it does |
 | --- | --- |
-| **The KWin patch** | Adds per-monitor SDR matrix support to KWin's DRM display backend. This is the code that makes the feature possible. |
-| **`kwin-ctm-monitor`** | Watches KDE neon for KWin updates, applies the patch, builds replacement KWin packages, tests them, and publishes them locally. |
-| **`kwinctmctl`** | Talks to the patched KWin over D-Bus. This is the command used to set, inspect, or reset a matrix. |
+| The KWin patch | Adds per-monitor SDR matrix support to KWin's DRM display backend. |
+| `kwin-ctm-monitor` | Watches KDE neon for KWin updates, applies the patch, builds replacement KWin packages, tests them, and publishes them locally. |
+| `kwinctmctl` | Talks to the patched KWin over D-Bus to set, inspect, or reset a matrix. |
 
-> **Installing `kwin-ctm-monitor` does not immediately add matrix support to
-> KWin.** It starts the build that produces the patched KWin packages. Those
-> packages must then be installed through Discover or `pkcon`. The feature is
-> available after rebooting into Plasma Wayland.
+Installing `kwin-ctm-monitor` does not change the running KWin. It starts a
+build of the patched KWin packages. Install those packages through Discover or
+`pkcon`, then reboot into Plasma Wayland.
 
-The complete flow is:
+## Installation flow
 
 1. Install the monitor package from this repo.
 2. The monitor downloads the exact KDE neon KWin source currently offered to
@@ -38,17 +35,17 @@ The complete flow is:
 4. Install the resulting KWin update with Discover or `pkcon`.
 5. Reboot into Plasma Wayland and set a matrix with `kwinctmctl`.
 
-This is currently a development release. Validation currently covers KDE neon
-Noble with KWin 6.7.x on AMD hardware. This is not an upstream KWin feature.
+Development release. Validation covers KDE neon Noble with KWin 6.7.x on AMD
+hardware. The patch is not part of upstream KWin.
 
 ## What is a CTM?
 
-CTM means **color transformation matrix**. It is a 3x3 set of numbers that
-mixes the red, green, and blue channels before the image reaches the monitor.
-Depending on the numbers, it can change saturation, tint, channel balance, or
-perform another linear RGB transform.
+CTM means color transformation matrix. It is a 3x3 set of numbers that mixes
+the red, green, and blue channels before the image reaches the monitor. A CTM
+can change saturation, tint, channel balance, or perform another linear RGB
+transform.
 
-For example, the following matrix increases saturation:
+The matrix below increases saturation.
 
 ```text
  1.6  -0.3  -0.3
@@ -56,9 +53,8 @@ For example, the following matrix increases saturation:
 -0.3  -0.3   1.6
 ```
 
-That matrix is an example, not a compiled-in default. The project accepts any
-valid 3x3 matrix supported by the display hardware. Settings are stored per
-monitor UUID.
+No matrix is compiled into KWin. `kwinctmctl` accepts any valid 3x3 matrix
+supported by the display hardware and stores it per monitor UUID.
 
 ## Why an ICC profile or KWin effect is not enough
 
@@ -73,10 +69,10 @@ backend, where output color operations are already managed.
 
 ## What gets installed
 
-The monitor package itself is small. The expensive build tooling stays inside
-an Ubuntu 24.04 Docker container.
+Building the monitor package requires only the normal Debian packaging tools.
+The KWin compiler toolchain runs inside an Ubuntu 24.04 Docker container.
 
-On the host, the package installs:
+The host package installs the following files and configuration.
 
 - `kwin-ctm-monitor.path` and a one-shot systemd service;
 - `kwinctmctl`;
@@ -85,14 +81,14 @@ On the host, the package installs:
 - `/usr/lib/modules-load.d/kwin-ctm-monitor.conf` so VKMS returns after reboot;
 - the KWin patch and the patch-maintenance skill.
 
-The KWin patch changes the packages built from the `kwin` source package,
-including `kwin-wayland` and `kwin-common`. Those are the packages that provide
-the new compositor behavior. Discover/PackageKit remains responsible for
-installing them.
+The patch changes packages built from the `kwin` source package, including
+`kwin-wayland` and `kwin-common`. The patched packages provide the new
+compositor behavior. Discover/PackageKit remains responsible for installing
+them.
 
 ## Requirements
 
-The supported target right now is:
+Current support is limited to this setup.
 
 - KDE neon based on Ubuntu 24.04 (Noble);
 - Plasma/KWin 6.7.x;
@@ -102,14 +98,14 @@ The supported target right now is:
 - enough room for a clean KWin build. Keep roughly 10 GB free and expect a
   temporary CPU/RAM spike while C++ and LTO jobs are running.
 
-Check VKMS before installing:
+Check for VKMS before installing.
 
 ```bash
 modinfo vkms >/dev/null && echo "VKMS available"
 ```
 
 On Ubuntu/Neon, a missing module usually means the matching extra-modules
-package is absent:
+package is absent.
 
 ```bash
 sudo apt install "linux-modules-extra-$(uname -r)"
@@ -121,7 +117,7 @@ only the dynamically discovered VKMS device.
 
 ## Build and install the monitor
 
-Clone the repo and build the small monitor package:
+Clone the repo and build the monitor package.
 
 ```bash
 git clone https://github.com/cjones26/kwin-ctm-monitor.git
@@ -136,13 +132,13 @@ monitor `.deb`. Runtime dependencies are declared by that package; PackageKit
 installs any that are missing. The KWin compiler toolchain does not remain on
 the host because it is installed inside the disposable container.
 
-PackageKit warns that `install-local` is installing untrusted software. That is
-expected for a standalone `.deb`: it did not arrive through an authenticated
-APT repository. Review the repo and verify the package checksum before
-approving the transaction. The machine-local KWin repository created later is
-signed with a key generated during monitor installation.
+PackageKit labels a standalone local `.deb` as untrusted because it did not
+arrive through an authenticated APT repository. Review the source and verify
+the package checksum before approving the transaction. The KWin repository
+created by the monitor is signed with a key generated during installation.
 
-Installing the monitor creates a one-shot build request. Follow it with:
+Installing the monitor creates a one-shot build request. Build output is
+available in the system journal.
 
 ```bash
 journalctl -fu kwin-ctm-monitor.service
@@ -152,7 +148,7 @@ On a 16-thread desktop, a clean KWin build has been taking about 12–20 minutes
 Slower CPUs or dependency downloads can push that past 30 minutes. Every new
 KWin source version is a clean build; there is no compiler cache yet.
 
-Check the machine-readable result in another terminal:
+Check the machine-readable result from another terminal.
 
 ```bash
 watch -n 10 kwin-ctm-monitor status
@@ -163,7 +159,7 @@ change the local source from `Enabled: no` to `Enabled: yes`.
 
 ## Install the patched KWin
 
-Refresh PackageKit and inspect the candidate first:
+Refresh PackageKit and inspect the candidate.
 
 ```bash
 pkcon refresh force
@@ -171,15 +167,15 @@ apt-cache policy kwin-wayland
 pkcon get-updates | grep -E 'kwin-(wayland|common|data|dev)'
 ```
 
-The candidate version must contain `+ctm1`. Install it:
+The candidate version must contain `+ctm1`.
 
 ```bash
 pkcon update kwin-wayland kwin-common kwin-data kwin-dev
 dpkg-query -W kwin-wayland kwin-common kwin-data kwin-dev
 ```
 
-Reboot and select **Plasma (Wayland)**. `kwin-x11` is a separate package and is
-not modified by this project.
+Reboot and select Plasma (Wayland). `kwin-x11` is a separate package and
+remains untouched.
 
 ## Use `kwinctmctl`
 
@@ -191,7 +187,7 @@ kwinctmctl list
 kwinctmctl show '<OUTPUT-UUID>'
 ```
 
-Test a matrix with compositor-owned rollback:
+Test a matrix with compositor-owned rollback.
 
 ```bash
 kwinctmctl set '<OUTPUT-UUID>' \
@@ -205,7 +201,7 @@ KWin applies the matrix temporarily and asks for confirmation. If the screen is
 wrong or unreadable, leave it alone; KWin restores the previous value when the
 timeout expires. Avoid `--force` until a matrix has been tested interactively.
 
-Reset one output:
+Reset one output.
 
 ```bash
 kwinctmctl reset '<OUTPUT-UUID>'
@@ -217,17 +213,17 @@ read or modified.
 
 ## HDR behavior
 
-The custom matrix is an **SDR-only** setting. KWin suspends it while HDR is
-active and restores it when that output returns to SDR. Applying the same
-matrix blindly to both signal paths would not reproduce the original X11 SDR
-behavior and can break HDR color handling.
+The custom matrix applies only to SDR. KWin suspends it while HDR is active and
+restores it when that output returns to SDR. Applying the same matrix to both
+signal paths would not reproduce the original X11 SDR behavior and can break
+HDR color handling.
 
 `kwinctmctl show '<OUTPUT-UUID>'` reports KWin's current `hdr` state. Test the
 transition both ways before relying on it.
 
 ## How update handling works
 
-The path unit watches APT metadata. When Neon advertises a new KWin version:
+The path unit watches APT metadata. A new Neon KWin version starts this job.
 
 1. Fetch the exact Neon source package with `apt-get source`.
 2. Apply `patches/custom-output-ctm.patch` with fuzz disabled.
@@ -239,33 +235,28 @@ The path unit watches APT metadata. When Neon advertises a new KWin version:
 6. Publish into a signed local APT repo using an atomic symlink swap.
 
 Publication keeps the current and previous successful builds. A failed patch,
-compile, or test leaves the previous repo untouched and writes the failure to:
-
-```text
-/var/lib/kwin-ctm-monitor/status.json
-```
+compile, or test leaves the previous repo untouched and records the failure at
+`/var/lib/kwin-ctm-monitor/status.json`.
 
 The APT pin prevents Discover from replacing patched KWin with an unpatched
-Neon build before the monitor has rebuilt it. The cost is that a broken patch
+Neon build before the monitor has rebuilt it. If the patch breaks, the pin
 holds KWin updates until the patch is repaired or the monitor is removed.
 
 ## Gotchas
 
-- **No software fallback.** If the DRM pipeline cannot represent the matrix,
-  KWin rejects it. Silently approximating the requested transform would violate
-  the exact-matrix requirement.
-- **VKMS is mandatory for validated builds.** Compilation can work without it,
-  but publication will fail because the full MockDrm test is not skipped.
-- **Hosted CI is awkward.** Typical unprivileged runners cannot load VKMS.
-  Matching validation requires a VM or self-hosted runner.
-- **The build is noisy.** `journalctl` includes compiler command lines and can
-  become large.
-- **KWin internals move.** A future Neon update may compile cleanly but still
-  require a semantic patch review. The bundled `update-kwin-ctm-patch` skill
-  documents the invariants; it is not a substitute for testing the actual
-  display path.
-- **GPU coverage is limited.** Current validation covers AMD hardware. Other
-  DRM drivers may expose different color-pipeline capabilities.
+- There is no software fallback. KWin rejects a matrix that the DRM pipeline
+  cannot represent. An approximation would violate the exact-matrix
+  requirement.
+- VKMS is mandatory for validated builds. Compilation can work without it, but
+  publication fails because the full MockDrm test is not skipped.
+- Typical hosted CI runners cannot load VKMS. Matching validation requires a VM
+  or self-hosted runner.
+- `journalctl` includes compiler command lines. Build logs can become large.
+- KWin internals move. A future Neon update may compile cleanly but still need
+  a semantic patch review. The bundled `update-kwin-ctm-patch` skill documents
+  the invariants but does not replace testing the display path.
+- Validation covers AMD hardware. Other DRM drivers may expose different
+  color-pipeline capabilities.
 
 ## Useful commands
 
@@ -283,7 +274,7 @@ metadata changes.
 
 ## Reset a matrix without uninstalling anything
 
-Reset each configured output while the patched KWin is still running:
+Reset each configured output while the patched KWin is still running.
 
 ```bash
 kwinctmctl list
@@ -297,11 +288,10 @@ from returning if the patch is installed again later.
 ## Remove the monitor and return to official KWin
 
 Removing `kwin-ctm-monitor` stops future builds, but it does not downgrade KWin.
-The patched KWin packages are ordinary installed Debian packages at that point.
-A complete rollback has two separate steps.
+The patched KWin packages remain installed. Rollback requires removing the
+monitor and downgrading KWin.
 
-First remove the monitor through PackageKit, then purge its retained build
-state:
+Remove the monitor through PackageKit, then purge its retained build state.
 
 ```bash
 pkcon remove kwin-ctm-monitor
@@ -309,12 +299,12 @@ sudo apt purge kwin-ctm-monitor
 pkcon refresh force
 ```
 
-That removes the systemd units, APT pin, generated local source, repository
-key, VKMS boot configuration, `/var/lib/kwin-ctm-monitor`, and the build cache.
-The already-loaded VKMS module may remain until reboot; that is harmless.
+Purging the package removes the systemd units, APT pin, generated local source,
+repository key, VKMS boot configuration, `/var/lib/kwin-ctm-monitor`, and the
+build cache. The already-loaded VKMS module may remain until reboot. It is a
+separate virtual display device and does not replace the active GPU.
 
-Next find the newest official Neon KWin version. Do not paste a version from
-this README because Neon package versions change:
+Resolve the newest official Neon KWin version at removal time.
 
 ```bash
 official_version="$(
@@ -337,7 +327,7 @@ test -n "$official_version" || {
 printf 'Downgrading to %s\n' "$official_version"
 ```
 
-Install that exact version for the four packages replaced by this project:
+Install the resolved version for all four replaced packages.
 
 ```bash
 sudo apt-get install --allow-downgrades \
@@ -347,7 +337,7 @@ sudo apt-get install --allow-downgrades \
   "kwin-dev=$official_version"
 ```
 
-Reboot, then verify that no installed KWin version contains `+ctm`:
+Reboot and verify that no installed KWin version contains `+ctm`.
 
 ```bash
 systemctl reboot

@@ -71,5 +71,14 @@ class AptSourceTests(unittest.TestCase):
                 monitor.enable_local_repository(source)
 
 
+class BuildBoundaryTests(unittest.TestCase):
+    def test_debian_changelog_tool_runs_inside_container(self):
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        prepare_source = source.split("def prepare_source", 1)[1].split("def find_vkms_node", 1)[0]
+        container_build = source.split("def build_in_docker", 1)[1].split("def validate_packages", 1)[0]
+        self.assertNotIn("dch", prepare_source)
+        self.assertIn('dch --newversion "$LOCAL_VERSION"', container_build)
+
+
 if __name__ == "__main__":
     unittest.main()

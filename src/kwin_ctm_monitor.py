@@ -124,7 +124,7 @@ def exclusive_lock():
         yield
 
 
-def prepare_source(work: Path, version: str, config: dict[str, str]) -> Path:
+def prepare_source(work: Path, version: str) -> Path:
     # KDE neon publishes deb-src metadata. Fetching the candidate's exact source
     # package is safer than combining an upstream tag with a moving packaging
     # branch and guarantees that build dependencies match the binary candidate.
@@ -134,15 +134,6 @@ def prepare_source(work: Path, version: str, config: dict[str, str]) -> Path:
         raise MonitorError(f"expected one extracted KWin source tree, found {len(candidates)}")
     source = candidates[0]
     run(["patch", "--batch", "--forward", "--fuzz=0", "-p1", "-i", str(PATCH)], cwd=source)
-    local_version = f"{version}+ctm1"
-    env = os.environ.copy()
-    env.update({"DEBEMAIL": "local@kwin-ctm.invalid", "DEBFULLNAME": "KWin CTM Monitor"})
-    proc = subprocess.run(
-        ["dch", "--newversion", local_version, "Apply configurable per-output SDR CTM support."],
-        cwd=source, env=env, check=False,
-    )
-    if proc.returncode:
-        raise MonitorError("failed to set local Debian package version")
     return source
 
 
@@ -164,7 +155,7 @@ def find_vkms_node(drm_class: Path = DRM_CLASS, dev_root: Path = Path("/dev/dri"
     raise MonitorError("VKMS DRM node not found; verify that the vkms module is loaded")
 
 
-def build_in_docker(source: Path, output: Path, image: str, vkms_node: Path) -> None:
+def build_in_docker(source: Path, output: Path, image: str, vkms_node: Path, local_version: str) -> None:
     output.mkdir(parents=True, exist_ok=True)
     script = r"""
 set -eu
@@ -175,6 +166,9 @@ cp /host/neon-archive-keyring.asc /etc/apt/keyrings/neon-archive-keyring.asc
 apt-get update
 apt-get install -y --no-install-recommends build-essential ca-certificates dbus-x11 debhelper devscripts equivs git pkg-kde-tools-neon x11-utils xauth xvfb
 cd "/build/$SOURCE_BASENAME"
+export DEBEMAIL=local@kwin-ctm.invalid
+export DEBFULLNAME='KWin CTM Monitor'
+dch --newversion "$LOCAL_VERSION" 'Apply configurable per-output SDR CTM support.'
 mk-build-deps --install --remove --tool 'apt-get -y --no-install-recommends' debian/control
 
 # Configure tests explicitly, then build and execute representative unit and
@@ -222,6 +216,7 @@ cp /build/*.deb /out/
         "docker", "run", "--rm", "--network=host",
         "-e", "CI=1",
         "-e", f"SOURCE_BASENAME={source.name}",
+        "-e", f"LOCAL_VERSION={local_version}",
         "--device", f"{vkms_node}:/dev/dri/card1",
         "-v", f"{source.parent}:/build",
         "-v", f"{output}:/out",
@@ -327,11 +322,11 @@ def build() -> None:
         CACHE.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="build-", dir=CACHE) as temporary:
             work = Path(temporary)
-            source = prepare_source(work, version, config)
+            source = prepare_source(work, version)
             output = work / "packages"
             local_version = f"{version}+ctm1"
             vkms_node = find_vkms_node()
-            build_in_docker(source, output, config.get("BUILD_IMAGE", "ubuntu:24.04"), vkms_node)
+            build_in_docker(source, output, config.get("BUILD_IMAGE", "ubuntu:24.04"), vkms_node, local_version)
             validate_packages(output, local_version)
             publish(output, local_version, config)
         write_status("published", neon_version=version, local_version=local_version)

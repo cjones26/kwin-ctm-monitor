@@ -1,3 +1,10 @@
+kwin-ctm-monitor (0.1.2-1) unstable; urgency=medium
+
+  * Keep Debian source-build tooling inside the Docker build environment.
+  * Remove unnecessary host-side development dependencies.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 05 Jul 2026 09:45:00 -0400
+
 kwin-ctm-monitor (0.1.1-1) unstable; urgency=medium
 
   * Trigger the initial build automatically after installation.

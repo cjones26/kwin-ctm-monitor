@@ -9,9 +9,8 @@ Homepage: https://github.com/cjones26/kwin-ctm-monitor
 
 Package: kwin-ctm-monitor
 Architecture: all
-Depends: ${misc:Depends}, apt-utils, ca-certificates,
- debian-keyring, devscripts, docker.io | docker-ce, dpkg-dev, git, gnupg, kmod, patch,
- python3
+Depends: ${misc:Depends}, apt-utils, docker.io | docker-ce, dpkg-dev, gnupg,
+ kmod, patch, python3
 Description: Preserve a configurable KWin CTM patch across KDE neon updates
  Watches APT metadata, builds a matching patched KWin in an isolated container,
  and publishes validated packages to a signed local APT repository. It does not

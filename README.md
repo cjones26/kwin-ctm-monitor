@@ -13,6 +13,8 @@ control.
 - Unpatched neon KWin packages are gated while the monitor is installed.
 - Builds never run inside an APT transaction.
 - KWin is built in a disposable Ubuntu 24.04 container.
+- Debian source-build tooling, including `dch` and `mk-build-deps`, exists only
+  inside that disposable container rather than on the host.
 - VKMS provides a dedicated virtual DRM device for validation; the live GPU is
   never passed into the container.
 - VKMS is loaded at boot through

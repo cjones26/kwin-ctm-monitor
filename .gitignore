@@ -1,0 +1,15 @@
+/build/
+/dist/
+*.deb
+*.buildinfo
+*.changes
+*.dsc
+*.tar.*
+__pycache__/
+*.pyc
+debian/.debhelper/
+debian/kwin-ctm-monitor/
+debian/debhelper-build-stamp
+debian/files
+debian/*.debhelper
+debian/*.substvars

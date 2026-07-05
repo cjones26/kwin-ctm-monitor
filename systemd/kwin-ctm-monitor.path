@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch APT metadata for KDE neon KWin updates
+
+[Path]
+PathChanged=/var/lib/apt/lists
+Unit=kwin-ctm-monitor.service
+
+[Install]
+WantedBy=multi-user.target

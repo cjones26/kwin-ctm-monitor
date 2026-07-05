@@ -1,0 +1,12 @@
+src/kwin_ctm_monitor.py usr/libexec/kwin-ctm-monitor
+bin/kwin-ctm-monitor usr/bin
+config/kwin-ctm-monitor.conf etc
+modules-load.d/kwin-ctm-monitor.conf usr/lib/modules-load.d
+apt/kwin-ctm-monitor.pref etc/apt/preferences.d
+systemd/kwin-ctm-monitor.path lib/systemd/system
+systemd/kwin-ctm-monitor.service lib/systemd/system
+patches/custom-output-ctm.patch usr/share/kwin-ctm-monitor/patches
+cli/kwinctmctl usr/bin
+man/kwin-ctm-monitor.1 usr/share/man/man1
+man/kwinctmctl.1 usr/share/man/man1
+skills/update-kwin-ctm-patch usr/share/kwin-ctm-monitor/skills

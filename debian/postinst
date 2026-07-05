@@ -1,0 +1,34 @@
+#!/bin/sh
+set -eu
+
+state=/var/lib/kwin-ctm-monitor
+repo="$state/repository/current"
+gnupg="$state/gnupg"
+keyring=/usr/share/keyrings/kwin-ctm-monitor.gpg
+
+install -d -m 0755 "$state" /var/cache/kwin-ctm-monitor /run/kwin-ctm-monitor
+install -d -m 0700 "$gnupg"
+
+if ! modprobe vkms; then
+    echo "kwin-ctm-monitor: unable to load vkms; builds will fail closed until VKMS is available" >&2
+fi
+
+if ! gpg --homedir "$gnupg" --list-secret-keys kwin-ctm-monitor >/dev/null 2>&1; then
+    gpg --homedir "$gnupg" --batch --passphrase '' --quick-generate-key \
+        'KWin CTM Monitor <local@kwin-ctm.invalid>' ed25519 sign 0
+fi
+gpg --homedir "$gnupg" --batch --export kwin-ctm-monitor > "$keyring"
+chmod 0644 "$keyring"
+
+cat > /etc/apt/sources.list.d/kwin-ctm-monitor.sources <<EOF
+Types: deb
+URIs: file:$repo
+Suites: stable
+Components: main
+Signed-By: $keyring
+EOF
+
+deb-systemd-helper enable kwin-ctm-monitor.path >/dev/null || true
+deb-systemd-invoke start kwin-ctm-monitor.path >/dev/null || true
+
+exit 0

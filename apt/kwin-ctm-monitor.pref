@@ -1,0 +1,7 @@
+Package: kwin-wayland kwin-common kwin-data kwin-dev
+Pin: version *+ctm*
+Pin-Priority: 1001
+
+Package: kwin-wayland kwin-common kwin-data kwin-dev
+Pin: origin "archive.neon.kde.org"
+Pin-Priority: -1

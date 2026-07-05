@@ -1,0 +1,71 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Command-line client for KWin's configurable output CTM D-Bus API."""
+
+import argparse
+import json
+import select
+import subprocess
+import sys
+
+
+SERVICE = "org.kde.KWin"
+PATH = "/KWin"
+INTERFACE = "org.kde.KWin"
+
+
+def qdbus(method, *args):
+    command = ["qdbus6", SERVICE, PATH, f"{INTERFACE}.{method}", *map(str, args)]
+    proc = subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode:
+        raise SystemExit(proc.stderr.strip() or f"{method} failed")
+    return proc.stdout.strip()
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("list")
+    show = sub.add_parser("show")
+    show.add_argument("output")
+    reset = sub.add_parser("reset")
+    reset.add_argument("output")
+    set_cmd = sub.add_parser("set")
+    set_cmd.add_argument("output")
+    set_cmd.add_argument("matrix", type=float, nargs=9)
+    set_cmd.add_argument("--timeout", type=int, default=15)
+    set_cmd.add_argument("--force", action="store_true")
+    args = parser.parse_args()
+
+    if args.command in ("list", "show"):
+        data = json.loads(qdbus("outputCtmState"))
+        if args.command == "show":
+            matches = [entry for entry in data if args.output in (entry["name"], entry["uuid"])]
+            if not matches:
+                raise SystemExit(f"unknown output: {args.output}")
+            data = matches[0]
+        print(json.dumps(data, indent=2))
+        return
+    if args.command == "reset":
+        qdbus("resetOutputCtm", args.output)
+        return
+
+    encoded = ",".join(format(value, ".17g") for value in args.matrix)
+    token = qdbus("beginOutputCtmTest", args.output, encoded, args.timeout)
+    if args.force:
+        qdbus("confirmOutputCtmTest", token)
+        return
+    print(f"Keep this matrix? [y/N] (reverting in {args.timeout} seconds): ", end="", flush=True)
+    try:
+        ready, _, _ = select.select([sys.stdin], [], [], args.timeout)
+        answer = sys.stdin.readline() if ready else ""
+    except (EOFError, KeyboardInterrupt):
+        answer = ""
+    if answer.strip().lower() in ("y", "yes"):
+        qdbus("confirmOutputCtmTest", token)
+    else:
+        qdbus("cancelOutputCtmTest", token)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update KWin CTM Patch"
+  short_description: "Repair the CTM patch after KWin source changes"
+  default_prompt: "Use $update-kwin-ctm-patch to update and validate the local KWin CTM patch against the latest KDE neon source."

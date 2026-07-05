@@ -1,0 +1,10 @@
+#!/bin/sh
+set -eu
+
+if [ "$1" = purge ]; then
+    rm -f /etc/apt/sources.list.d/kwin-ctm-monitor.sources
+    rm -f /usr/share/keyrings/kwin-ctm-monitor.gpg
+    rm -rf /var/lib/kwin-ctm-monitor /var/cache/kwin-ctm-monitor
+fi
+
+exit 0

@@ -1,0 +1,33 @@
+.TH KWINCTMCTL 1 "July 2026" "kwin-ctm-monitor 0.1.0" "User Commands"
+.SH NAME
+kwinctmctl \- manage per-output SDR color transformation matrices in KWin
+.SH SYNOPSIS
+.B kwinctmctl list
+.br
+.B kwinctmctl show
+.I output
+.br
+.B kwinctmctl set
+.I output m11 m12 m13 m21 m22 m23 m31 m32 m33
+.RI [ --timeout seconds ]
+.RI [ --force ]
+.br
+.B kwinctmctl reset
+.I output
+.SH DESCRIPTION
+kwinctmctl addresses an output by connector name or UUID and calls the patched
+KWin D-Bus API. A set operation is temporary until confirmed. KWin owns the
+timeout and restores the previous matrix if the client exits or confirmation
+does not arrive.
+.PP
+The matrix is applied only to SDR output. KWin suspends it while HDR is active
+and restores it when the output returns to SDR.
+.SH OPTIONS
+.TP
+.BI --timeout " seconds"
+Rollback timeout. The default is 15 seconds.
+.TP
+.B --force
+Confirm immediately without an interactive prompt.
+.SH SEE ALSO
+.BR kwin-ctm-monitor (1)

@@ -1,0 +1,509 @@
+diff --git a/src/backends/drm/drm_output.cpp b/src/backends/drm/drm_output.cpp
+index 22a4e09..b24bb19 100644
+--- a/src/backends/drm/drm_output.cpp
++++ b/src/backends/drm/drm_output.cpp
+@@ -38,6 +38,24 @@
+ namespace KWin
+ {
+ 
++static ValueRange matrixOutputRange(const QMatrix4x4 &matrix)
++{
++    double minimum = 0;
++    double maximum = 1;
++    for (int row = 0; row < 3; ++row) {
++        double rowMinimum = 0;
++        double rowMaximum = 0;
++        for (int column = 0; column < 3; ++column) {
++            const double coefficient = matrix(row, column);
++            rowMinimum += std::min(coefficient, 0.0);
++            rowMaximum += std::max(coefficient, 0.0);
++        }
++        minimum = std::min(minimum, rowMinimum);
++        maximum = std::max(maximum, rowMaximum);
++    }
++    return ValueRange{minimum, maximum};
++}
++
+ static bool s_disableTripleBufferingSet = false;
+ static const bool s_disableTripleBuffering = qEnvironmentVariableIntValue("KWIN_DRM_DISABLE_TRIPLE_BUFFERING", &s_disableTripleBufferingSet) == 1;
+ 
+@@ -547,6 +565,9 @@ bool DrmOutput::queueChanges(const std::shared_ptr<OutputChangeSet> &props)
+     m_nextState->maxAverageBrightnessOverride = props->maxAverageBrightnessOverride.value_or(m_state.maxAverageBrightnessOverride);
+     m_nextState->minBrightnessOverride = props->minBrightnessOverride.value_or(m_state.minBrightnessOverride);
+     m_nextState->sdrGamutWideness = props->sdrGamutWideness.value_or(m_state.sdrGamutWideness);
++    if (props->customSdrCtm) {
++        m_nextState->customSdrCtm = *props->customSdrCtm;
++    }
+     m_nextState->iccProfilePath = props->iccProfilePath.value_or(m_state.iccProfilePath);
+     m_nextState->iccProfile = props->iccProfile.value_or(m_state.iccProfile);
+     m_nextState->hdrIccProfilePath = props->hdrIccProfilePath.value_or(m_state.hdrIccProfilePath);
+@@ -620,10 +641,17 @@ bool DrmOutput::queueChanges(const std::shared_ptr<OutputChangeSet> &props)
+     } else {
+         m_pipeline->setIccProfile(m_nextState->iccProfile);
+     }
+-    // remove the color pipeline for the atomic test
+-    // otherwise it could potentially fail
++    // Normally the color pipeline is removed for the atomic modeset test. A
++    // custom CTM is explicitly hardware-only, so include it in the test and
++    // reject the output configuration if KMS cannot represent it.
+     if (m_gpu->atomicModeSetting()) {
+-        m_pipeline->setCrtcColorPipeline(ColorPipeline{});
++        if (!hdr && m_nextState->customSdrCtm) {
++            ColorPipeline testPipeline(ValueRange{0, 1}, ColorspaceType::NonLinearRGB);
++            testPipeline.addMatrix(*m_nextState->customSdrCtm, matrixOutputRange(*m_nextState->customSdrCtm), ColorspaceType::NonLinearRGB);
++            m_pipeline->setCrtcColorPipeline(testPipeline);
++        } else {
++            m_pipeline->setCrtcColorPipeline(ColorPipeline{});
++        }
+     }
+ 
+     return true;
+@@ -762,7 +790,9 @@ void DrmOutput::tryKmsColorOffloading(State &next)
+     const auto &iccProfile = hdr ? next.hdrIccProfile : next.iccProfile;
+     const ColorProfileSource profileSource = hdr ? next.hdrColorProfileSource : next.colorProfileSource;
+     const bool usesICC = profileSource == ColorProfileSource::ICC && iccProfile;
+-    if (next.colorPowerTradeoff == ColorPowerTradeoff::PreferAccuracy) {
++    // A custom CTM is explicitly hardware-only. Never route it through the
++    // shadow-buffer accuracy path, which cannot reproduce the CRTC CTM.
++    if (next.colorPowerTradeoff == ColorPowerTradeoff::PreferAccuracy && !next.customSdrCtm) {
+         next.layerBlendingColor = encoding;
+         m_pipeline->setCrtcColorPipeline(ColorPipeline{});
+         m_pipeline->applyPendingChanges();
+@@ -790,6 +820,11 @@ void DrmOutput::tryKmsColorOffloading(State &next)
+             colorPipeline.add1DLUT(iccProfile->vcgt(), ColorspaceType::NonLinearRGB);
+         }
+     }
++    if (!hdr && next.customSdrCtm) {
++        // Match X11's legacy CRTC CTM semantics: this user matrix is the last
++        // operation in nonlinear, output-encoded SDR RGB.
++        colorPipeline.addMatrix(*next.customSdrCtm, matrixOutputRange(*next.customSdrCtm), ColorspaceType::NonLinearRGB);
++    }
+     m_pipeline->setCrtcColorPipeline(colorPipeline);
+     if (DrmPipeline::commitPipelines({m_pipeline}, DrmPipeline::CommitMode::Test) == DrmPipeline::Error::None) {
+         m_pipeline->applyPendingChanges();
+@@ -797,7 +832,10 @@ void DrmOutput::tryKmsColorOffloading(State &next)
+         m_needsShadowBuffer = false;
+         return;
+     }
+-    if (next.colorDescription->transferFunction().type == blendingSpace && !usesICC) {
++    // The simplified fallback intentionally changes color semantics. It is
++    // acceptable for KWin's ordinary color handling, but not for an exact
++    // user-supplied CRTC CTM.
++    if (next.colorDescription->transferFunction().type == blendingSpace && !usesICC && !next.customSdrCtm) {
+         // Allow falling back to applying night light in non-linear space.
+         // This isn't technically correct, but the difference is quite small and not worth
+         // losing a lot of performance and battery life over
+diff --git a/src/core/backendoutput.cpp b/src/core/backendoutput.cpp
+index 1bca7fd..e158a5f 100644
+--- a/src/core/backendoutput.cpp
++++ b/src/core/backendoutput.cpp
+@@ -641,6 +641,11 @@ double BackendOutput::sdrGamutWideness() const
+     return m_state.sdrGamutWideness;
+ }
+ 
++const std::optional<QMatrix4x4> &BackendOutput::customSdrCtm() const
++{
++    return m_state.customSdrCtm;
++}
++
+ BackendOutput::ColorProfileSource BackendOutput::colorProfileSource() const
+ {
+     return m_state.colorProfileSource;
+diff --git a/src/core/backendoutput.h b/src/core/backendoutput.h
+index dc1ea6b..0f21c09 100644
+--- a/src/core/backendoutput.h
++++ b/src/core/backendoutput.h
+@@ -9,6 +9,7 @@
+ #pragma once
+ 
+ #include "output.h"
++#include <QMatrix4x4>
+ 
+ class QJsonArray;
+ 
+@@ -256,6 +257,7 @@ public:
+     std::optional<double> minBrightnessOverride() const;
+ 
+     double sdrGamutWideness() const;
++    const std::optional<QMatrix4x4> &customSdrCtm() const;
+     ColorProfileSource colorProfileSource() const;
+     ColorProfileSource hdrColorProfileSource() const;
+ 
+@@ -467,6 +469,7 @@ protected:
+         std::optional<double> maxAverageBrightnessOverride;
+         std::optional<double> minBrightnessOverride;
+         double sdrGamutWideness = 0;
++        std::optional<QMatrix4x4> customSdrCtm;
+         VrrPolicy vrrPolicy = VrrPolicy::Automatic;
+         /// the desired brightness level as set by the user
+         double brightnessSetting = 1.0;
+diff --git a/src/core/outputconfiguration.h b/src/core/outputconfiguration.h
+index 5ef3522..3c74c3e 100644
+--- a/src/core/outputconfiguration.h
++++ b/src/core/outputconfiguration.h
+@@ -12,6 +12,7 @@
+ 
+ #include "backendoutput.h"
+ 
++#include <QMatrix4x4>
+ #include <QPoint>
+ #include <QSize>
+ 
+@@ -47,6 +48,7 @@ public:
+     std::optional<std::optional<double>> maxAverageBrightnessOverride;
+     std::optional<std::optional<double>> minBrightnessOverride;
+     std::optional<double> sdrGamutWideness;
++    std::optional<std::optional<QMatrix4x4>> customSdrCtm;
+     std::optional<BackendOutput::ColorProfileSource> colorProfileSource;
+     std::optional<BackendOutput::ColorProfileSource> hdrColorProfileSource;
+     std::optional<double> brightness;
+diff --git a/src/dbusinterface.cpp b/src/dbusinterface.cpp
+index 33259b8..541fd6f 100644
+--- a/src/dbusinterface.cpp
++++ b/src/dbusinterface.cpp
+@@ -16,6 +16,10 @@
+ // kwin
+ #include "compositor.h"
+ #include "core/output.h"
++#include "core/backendoutput.h"
++#include "core/outputbackend.h"
++#include "core/outputconfiguration.h"
++#include "outputconfigurationstore.h"
+ #include "core/renderbackend.h"
+ #include "debug_console.h"
+ #include "kwinadaptor.h"
+@@ -31,7 +35,13 @@
+ 
+ // Qt
+ #include <QDBusConnection>
++#include <QJsonArray>
++#include <QJsonDocument>
++#include <QJsonObject>
+ #include <QOpenGLContext>
++#include <QUuid>
++#include <cmath>
++#include <ranges>
+ 
+ namespace KWin
+ {
+@@ -49,13 +59,129 @@ DBusInterface::DBusInterface(QObject *parent)
+                  Workspace::self(), SLOT(slotReloadConfig()));
+ 
+     connect(Workspace::self(), &Workspace::showingDesktopChanged, this, &DBusInterface::onShowingDesktopChanged);
++    m_ctmRollbackTimer.setSingleShot(true);
++    connect(&m_ctmRollbackTimer, &QTimer::timeout, this, &DBusInterface::rollbackOutputCtm);
+ }
+ 
+ DBusInterface::~DBusInterface()
+ {
++    rollbackOutputCtm();
+     QDBusConnection::sessionBus().unregisterService(m_serviceName);
+ }
+ 
++BackendOutput *DBusInterface::findOutput(const QString &selector) const
++{
++    const auto outputs = kwinApp()->outputBackend()->outputs();
++    const auto it = std::ranges::find_if(outputs, [&selector](BackendOutput *output) {
++        return output->name() == selector || output->uuid() == selector;
++    });
++    return it == outputs.end() ? nullptr : *it;
++}
++
++bool DBusInterface::applyOutputCtm(BackendOutput *output, const std::optional<QMatrix4x4> &matrix, bool store)
++{
++    if (!output) {
++        return false;
++    }
++    OutputConfiguration config;
++    config.source = OutputConfiguration::Source::User;
++    config.changeSet(output)->customSdrCtm = matrix;
++    return workspace()->applyOutputConfiguration(config, store) == OutputConfigurationError::None;
++}
++
++QString DBusInterface::outputCtmState()
++{
++    QJsonArray result;
++    for (BackendOutput *output : kwinApp()->outputBackend()->outputs()) {
++        QJsonObject item{{"name", output->name()}, {"uuid", output->uuid()}, {"hdr", output->highDynamicRange()}};
++        if (output->customSdrCtm()) {
++            QJsonArray values;
++            for (int row = 0; row < 3; ++row) {
++                for (int column = 0; column < 3; ++column) {
++                    values.push_back((*output->customSdrCtm())(row, column));
++                }
++            }
++            item["matrix"] = values;
++        }
++        result.push_back(item);
++    }
++    return QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact));
++}
++
++QString DBusInterface::beginOutputCtmTest(const QString &selector, const QString &encoded, uint timeoutSeconds)
++{
++    if (!m_ctmTestToken.isEmpty()) {
++        sendErrorReply(QDBusError::LimitsExceeded, QStringLiteral("another CTM test is active"));
++        return {};
++    }
++    BackendOutput *output = findOutput(selector);
++    const QStringList parts = encoded.split(QLatin1Char(','));
++    if (!output || parts.size() != 9 || timeoutSeconds < 5 || timeoutSeconds > 120) {
++        sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("invalid output, matrix, or timeout"));
++        return {};
++    }
++    QMatrix4x4 matrix;
++    for (int index = 0; index < 9; ++index) {
++        bool ok = false;
++        const double value = parts[index].toDouble(&ok);
++        if (!ok || !std::isfinite(value) || std::abs(value) > 8) {
++            sendErrorReply(QDBusError::InvalidArgs, QStringLiteral("matrix coefficients must be finite and within [-8, 8]"));
++            return {};
++        }
++        matrix(index / 3, index % 3) = value;
++    }
++    m_ctmTestOutput = output;
++    m_previousCtm = output->customSdrCtm();
++    m_ctmTestToken = QUuid::createUuid().toString(QUuid::WithoutBraces);
++    if (!applyOutputCtm(output, matrix, false)) {
++        m_ctmTestOutput.clear();
++        m_previousCtm.reset();
++        m_ctmTestToken.clear();
++        sendErrorReply(QDBusError::Failed, QStringLiteral("the DRM backend rejected the CTM"));
++        return {};
++    }
++    m_ctmRollbackTimer.start(int(timeoutSeconds * 1000));
++    return m_ctmTestToken;
++}
++
++bool DBusInterface::confirmOutputCtmTest(const QString &token)
++{
++    if (token != m_ctmTestToken || !m_ctmTestOutput) {
++        return false;
++    }
++    m_ctmRollbackTimer.stop();
++    workspace()->outputConfigureStore()->storeConfig(kwinApp()->outputBackend()->outputs(), false);
++    m_ctmTestOutput.clear();
++    m_previousCtm.reset();
++    m_ctmTestToken.clear();
++    return true;
++}
++
++void DBusInterface::rollbackOutputCtm()
++{
++    if (m_ctmTestOutput) {
++        applyOutputCtm(m_ctmTestOutput, m_previousCtm, false);
++    }
++    m_ctmRollbackTimer.stop();
++    m_ctmTestOutput.clear();
++    m_previousCtm.reset();
++    m_ctmTestToken.clear();
++}
++
++bool DBusInterface::cancelOutputCtmTest(const QString &token)
++{
++    if (token != m_ctmTestToken) {
++        return false;
++    }
++    rollbackOutputCtm();
++    return true;
++}
++
++bool DBusInterface::resetOutputCtm(const QString &selector)
++{
++    return m_ctmTestToken.isEmpty() && applyOutputCtm(findOutput(selector), std::nullopt, true);
++}
++
+ bool DBusInterface::showingDesktop() const
+ {
+     return workspace()->showingDesktop();
+diff --git a/src/dbusinterface.h b/src/dbusinterface.h
+index ebabdef..73ca620 100644
+--- a/src/dbusinterface.h
++++ b/src/dbusinterface.h
+@@ -11,7 +11,10 @@
+ 
+ #include <QDBusContext>
+ #include <QDBusMessage>
++#include <QMatrix4x4>
+ #include <QObject>
++#include <QPointer>
++#include <QTimer>
+ 
+ #include "virtualdesktopsdbustypes.h"
+ 
+@@ -21,6 +24,7 @@ namespace KWin
+ class Compositor;
+ class PluginManager;
+ class VirtualDesktopManager;
++class BackendOutput;
+ 
+ /**
+  * @brief This class is a wrapper for the org.kde.KWin D-Bus interface.
+@@ -59,6 +63,11 @@ public Q_SLOTS: // METHODS
+     QString supportInformation();
+     QString activeOutputName();
+     Q_NOREPLY void showDebugConsole();
++    QString outputCtmState();
++    QString beginOutputCtmTest(const QString &output, const QString &matrix, uint timeoutSeconds);
++    bool confirmOutputCtmTest(const QString &token);
++    bool cancelOutputCtmTest(const QString &token);
++    bool resetOutputCtm(const QString &output);
+ 
+     /**
+      * Instructs kwin_wayland to restart itself.
+@@ -95,8 +104,16 @@ private Q_SLOTS:
+     void onShowingDesktopChanged(bool show, bool /*animated*/);
+ 
+ private:
++    BackendOutput *findOutput(const QString &selector) const;
++    bool applyOutputCtm(BackendOutput *output, const std::optional<QMatrix4x4> &matrix, bool store);
++    void rollbackOutputCtm();
++
+     QString m_serviceName;
+     QDBusMessage m_replyQueryWindowInfo;
++    QPointer<BackendOutput> m_ctmTestOutput;
++    std::optional<QMatrix4x4> m_previousCtm;
++    QString m_ctmTestToken;
++    QTimer m_ctmRollbackTimer;
+ };
+ 
+ class CompositorDBusInterface : public QObject
+diff --git a/src/org.kde.KWin.xml b/src/org.kde.KWin.xml
+index b073a71..2f256cc 100644
+--- a/src/org.kde.KWin.xml
++++ b/src/org.kde.KWin.xml
+@@ -25,6 +25,14 @@
+         <arg type="s" direction="out"/>
+     </method>
+     <method name="showDebugConsole"/>
++    <method name="outputCtmState"><arg type="s" direction="out"/></method>
++    <method name="beginOutputCtmTest">
++      <arg name="output" type="s" direction="in"/><arg name="matrix" type="s" direction="in"/>
++      <arg name="timeoutSeconds" type="u" direction="in"/><arg name="token" type="s" direction="out"/>
++    </method>
++    <method name="confirmOutputCtmTest"><arg name="token" type="s" direction="in"/><arg type="b" direction="out"/></method>
++    <method name="cancelOutputCtmTest"><arg name="token" type="s" direction="in"/><arg type="b" direction="out"/></method>
++    <method name="resetOutputCtm"><arg name="output" type="s" direction="in"/><arg type="b" direction="out"/></method>
+     <method name="replace"/>
+     <method name="queryWindowInfo">
+         <annotation name="org.qtproject.QtDBus.QtTypeName.Out0" value="QVariantMap"/>
+diff --git a/src/outputconfigurationstore.cpp b/src/outputconfigurationstore.cpp
+index 2f6a76c..8457ffb 100644
+--- a/src/outputconfigurationstore.cpp
++++ b/src/outputconfigurationstore.cpp
+@@ -23,6 +23,7 @@
+ #include <QJsonArray>
+ #include <QJsonDocument>
+ #include <QJsonObject>
++#include <cmath>
+ #include <ranges>
+ 
+ namespace KWin
+@@ -355,6 +356,7 @@ void OutputConfigurationStore::storeConfig(const QList<BackendOutput *> &allOutp
+             .maxAverageBrightnessOverride = output->maxAverageBrightnessOverride(),
+             .minBrightnessOverride = output->minBrightnessOverride(),
+             .sdrGamutWideness = output->sdrGamutWideness(),
++            .customSdrCtm = output->customSdrCtm(),
+             .brightness = output->brightnessSetting(),
+             .allowSdrSoftwareBrightness = output->allowSdrSoftwareBrightness(),
+             .colorPowerTradeoff = output->colorPowerTradeoff(),
+@@ -450,6 +452,7 @@ OutputConfiguration OutputConfigurationStore::setupToConfig(Setup *setup, const
+             .maxAverageBrightnessOverride = state.maxAverageBrightnessOverride,
+             .minBrightnessOverride = state.minBrightnessOverride,
+             .sdrGamutWideness = state.sdrGamutWideness,
++            .customSdrCtm = state.customSdrCtm,
+             .colorProfileSource = state.colorProfileSource,
+             .hdrColorProfileSource = state.hdrColorProfileSource,
+             .brightness = state.brightness,
+@@ -1100,6 +1103,18 @@ void OutputConfigurationStore::load()
+         if (const auto it = data.find("sdrGamutWideness"); it != data.end() && it->isDouble()) {
+             state.sdrGamutWideness = it->toDouble();
+         }
++        if (const auto it = data.find("customSdrCtm"); it != data.end() && it->isArray()) {
++            const QJsonArray values = it->toArray();
++            if (values.size() == 9 && std::ranges::all_of(values, [](const QJsonValue &value) { return value.isDouble() && std::isfinite(value.toDouble()); })) {
++                QMatrix4x4 matrix;
++                for (int row = 0; row < 3; ++row) {
++                    for (int column = 0; column < 3; ++column) {
++                        matrix(row, column) = values.at(row * 3 + column).toDouble();
++                    }
++                }
++                state.customSdrCtm = matrix;
++            }
++        }
+         if (const auto it = data.find("colorProfileSource"); it != data.end()) {
+             if (const auto source = stringToProfileSource(it->toString())) {
+                 state.colorProfileSource = *source;
+@@ -1428,6 +1443,15 @@ void OutputConfigurationStore::save()
+         if (output.sdrGamutWideness) {
+             o["sdrGamutWideness"] = *output.sdrGamutWideness;
+         }
++        if (output.customSdrCtm) {
++            QJsonArray values;
++            for (int row = 0; row < 3; ++row) {
++                for (int column = 0; column < 3; ++column) {
++                    values.push_back((*output.customSdrCtm)(row, column));
++                }
++            }
++            o["customSdrCtm"] = values;
++        }
+         if (output.colorProfileSource) {
+             o["colorProfileSource"] = profileSourceToString(*output.colorProfileSource);
+         }
+diff --git a/src/outputconfigurationstore.h b/src/outputconfigurationstore.h
+index bc337ee..a08a2b5 100644
+--- a/src/outputconfigurationstore.h
++++ b/src/outputconfigurationstore.h
+@@ -11,6 +11,7 @@
+ #include "core/backendoutput.h"
+ 
+ #include <QList>
++#include <QMatrix4x4>
+ #include <QPoint>
+ #include <QSize>
+ #include <memory>
+@@ -80,6 +81,7 @@ private:
+         std::optional<double> maxAverageBrightnessOverride;
+         std::optional<double> minBrightnessOverride;
+         std::optional<double> sdrGamutWideness;
++        std::optional<QMatrix4x4> customSdrCtm;
+         std::optional<double> brightness;
+         std::optional<bool> allowSdrSoftwareBrightness;
+         std::optional<BackendOutput::ColorPowerTradeoff> colorPowerTradeoff;
+diff --git a/src/workspace.cpp b/src/workspace.cpp
+index 126ae37..9ca512d 100644
+--- a/src/workspace.cpp
++++ b/src/workspace.cpp
+@@ -506,7 +506,7 @@ Workspace::~Workspace()
+     _self = nullptr;
+ }
+ 
+-OutputConfigurationError Workspace::applyOutputConfiguration(OutputConfiguration &config)
++OutputConfigurationError Workspace::applyOutputConfiguration(OutputConfiguration &config, bool store)
+ {
+     assignBrightnessDevices(config);
+     const auto backendOutputs = kwinApp()->outputBackend()->outputs();
+@@ -539,7 +539,9 @@ OutputConfigurationError Workspace::applyOutputConfiguration(OutputConfiguration
+         return error;
+     }
+     updateOutputs();
+-    m_outputConfigStore->storeConfig(backendOutputs, m_lidSwitchTracker->isLidClosed());
++    if (store) {
++        m_outputConfigStore->storeConfig(backendOutputs, m_lidSwitchTracker->isLidClosed());
++    }
+     m_orientationSensor->setEnabled(m_outputConfigStore->isAutoRotateActive(backendOutputs, kwinApp()->tabletModeManager()->effectiveTabletMode()));
+     m_lightSensor->setEnabled(m_outputConfigStore->isAutoBrightnessActive(backendOutputs));
+ 
+diff --git a/src/workspace.h b/src/workspace.h
+index be1ff90..6061b57 100644
+--- a/src/workspace.h
++++ b/src/workspace.h
+@@ -432,7 +432,7 @@ public:
+      * Apply the requested output configuration. Note that you must use this function
+      * instead of Platform::applyOutputChanges().
+      */
+-    OutputConfigurationError applyOutputConfiguration(OutputConfiguration &config);
++    OutputConfigurationError applyOutputConfiguration(OutputConfiguration &config, bool store = true);
+     void updateXwaylandScale();
+ 
+     void setActivationToken(const QString &token, UInt32Serial serial, const QString &appId);

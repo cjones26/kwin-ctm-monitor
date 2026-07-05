@@ -1,0 +1,19 @@
+[Unit]
+Description=Build a locally patched KDE neon KWin package set
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+ConditionPathExists=/etc/kwin-ctm-monitor.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/kwin-ctm-monitor/kwin_ctm_monitor.py build
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=6
+TimeoutStartSec=infinity
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/cache/kwin-ctm-monitor /var/lib/kwin-ctm-monitor /run/kwin-ctm-monitor
+NoNewPrivileges=true

@@ -1,3 +1,11 @@
+kwin-ctm-monitor (0.1.1-1) unstable; urgency=medium
+
+  * Trigger the initial build automatically after installation.
+  * Enable the local APT source only after successful publication.
+  * Make Xvfb validation readiness explicit and persist VKMS at boot.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 05 Jul 2026 09:30:00 -0400
+
 kwin-ctm-monitor (0.1.0-1) unstable; urgency=medium
 
   * Initial development release.

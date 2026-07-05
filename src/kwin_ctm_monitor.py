@@ -26,6 +26,7 @@ PATCH = Path("/usr/share/kwin-ctm-monitor/patches/custom-output-ctm.patch")
 NEON_SOURCES = Path("/etc/apt/sources.list.d/neon.sources")
 NEON_KEY = Path("/etc/apt/keyrings/neon-archive-keyring.asc")
 DRM_CLASS = Path("/sys/class/drm")
+LOCAL_SOURCE = Path("/etc/apt/sources.list.d/kwin-ctm-monitor.sources")
 
 PACKAGES = ("kwin-wayland", "kwin-common", "kwin-data", "kwin-dev")
 
@@ -246,6 +247,22 @@ def validate_packages(output: Path, local_version: str) -> None:
         raise MonitorError(f"build missing required packages: {', '.join(sorted(missing))}")
 
 
+def enable_local_repository(source_file: Path = LOCAL_SOURCE) -> None:
+    try:
+        content = source_file.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise MonitorError(f"cannot read local APT source: {exc}") from exc
+    if "Enabled: yes" in content:
+        return
+    if "Enabled: no" not in content:
+        raise MonitorError("local APT source has no managed Enabled field")
+    updated = content.replace("Enabled: no", "Enabled: yes", 1)
+    try:
+        source_file.write_text(updated, encoding="utf-8")
+    except OSError as exc:
+        raise MonitorError(f"cannot enable local APT source: {exc}") from exc
+
+
 def publish(output: Path, version: str, config: dict[str, str]) -> None:
     builds = STATE / "builds"
     builds.mkdir(parents=True, exist_ok=True)
@@ -293,6 +310,7 @@ def publish(output: Path, version: str, config: dict[str, str]) -> None:
     for old in repository_root.glob("staging-*"):
         if old != staging and not (link.is_symlink() and link.resolve() == old.resolve()):
             shutil.rmtree(old)
+    enable_local_repository()
 
 
 def build() -> None:
@@ -302,6 +320,7 @@ def build() -> None:
     with exclusive_lock():
         version = versions_from_madison()[-1]
         if already_published(version):
+            enable_local_repository()
             write_status("published", neon_version=version, message="already current")
             return
         write_status("building", neon_version=version)

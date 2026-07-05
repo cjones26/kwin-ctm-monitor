@@ -14,11 +14,17 @@ if ! modprobe vkms; then
 fi
 
 if ! gpg --homedir "$gnupg" --list-secret-keys kwin-ctm-monitor >/dev/null 2>&1; then
-    gpg --homedir "$gnupg" --batch --passphrase '' --quick-generate-key \
+    gpg --homedir "$gnupg" --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
         'KWin CTM Monitor <local@kwin-ctm.invalid>' ed25519 sign 0
 fi
 gpg --homedir "$gnupg" --batch --export kwin-ctm-monitor > "$keyring"
 chmod 0644 "$keyring"
+
+if [ -f "$repo/dists/stable/InRelease" ]; then
+    enabled=yes
+else
+    enabled=no
+fi
 
 cat > /etc/apt/sources.list.d/kwin-ctm-monitor.sources <<EOF
 Types: deb
@@ -26,8 +32,10 @@ URIs: file:$repo
 Suites: stable
 Components: main
 Signed-By: $keyring
+Enabled: $enabled
 EOF
 
+touch "$state/rebuild-requested"
 deb-systemd-helper enable kwin-ctm-monitor.path >/dev/null || true
 deb-systemd-invoke start kwin-ctm-monitor.path >/dev/null || true
 

@@ -7,6 +7,7 @@ ConditionPathExists=/etc/kwin-ctm-monitor.conf
 
 [Service]
 Type=oneshot
+ExecStartPre=/usr/bin/rm -f /var/lib/kwin-ctm-monitor/rebuild-requested
 ExecStart=/usr/libexec/kwin-ctm-monitor/kwin_ctm_monitor.py build
 Nice=10
 IOSchedulingClass=best-effort
@@ -15,5 +16,5 @@ TimeoutStartSec=infinity
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true
-ReadWritePaths=/var/cache/kwin-ctm-monitor /var/lib/kwin-ctm-monitor /run/kwin-ctm-monitor
+ReadWritePaths=/var/cache/kwin-ctm-monitor /var/lib/kwin-ctm-monitor /run/kwin-ctm-monitor /etc/apt/sources.list.d/kwin-ctm-monitor.sources
 NoNewPrivileges=true

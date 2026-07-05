@@ -55,5 +55,21 @@ class VkmsTests(unittest.TestCase):
                 monitor.find_vkms_node(root / "sys", root / "dev")
 
 
+class AptSourceTests(unittest.TestCase):
+    def test_enables_repository_after_publication(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = pathlib.Path(temporary) / "local.sources"
+            source.write_text("Types: deb\nEnabled: no\n", encoding="utf-8")
+            monitor.enable_local_repository(source)
+            self.assertEqual(source.read_text(encoding="utf-8"), "Types: deb\nEnabled: yes\n")
+
+    def test_rejects_unmanaged_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = pathlib.Path(temporary) / "local.sources"
+            source.write_text("Types: deb\n", encoding="utf-8")
+            with self.assertRaises(monitor.MonitorError):
+                monitor.enable_local_repository(source)
+
+
 if __name__ == "__main__":
     unittest.main()

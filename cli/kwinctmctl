@@ -7,6 +7,7 @@ import json
 import select
 import subprocess
 import sys
+import time
 
 
 SERVICE = "org.kde.KWin"
@@ -20,6 +21,25 @@ def qdbus(method, *args):
     if proc.returncode:
         raise SystemExit(proc.stderr.strip() or f"{method} failed")
     return proc.stdout.strip()
+
+
+def require_true(method, *args):
+    result = qdbus(method, *args)
+    if result.lower() != "true":
+        raise SystemExit(f"{method} was rejected")
+
+
+def wait_until_applied(output, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        states = json.loads(qdbus("outputCtmState"))
+        state = next((item for item in states if item["uuid"] == output or item["name"] == output), None)
+        if state and state.get("status") in ("active", "suspended-hdr"):
+            return
+        if state and state.get("status") == "rejected":
+            raise SystemExit("KWin rejected the CTM during presentation")
+        time.sleep(0.05)
+    raise SystemExit("KWin did not present a frame with the CTM")
 
 
 def main():
@@ -37,6 +57,11 @@ def main():
     set_cmd.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
+    if args.command == "set":
+        maximum = 120 if args.force else 115
+        if not 5 <= args.timeout <= maximum:
+            parser.error(f"--timeout must be between 5 and {maximum} seconds")
+
     if args.command in ("list", "show"):
         data = json.loads(qdbus("outputCtmState"))
         if args.command == "show":
@@ -47,24 +72,30 @@ def main():
         print(json.dumps(data, indent=2))
         return
     if args.command == "reset":
-        qdbus("resetOutputCtm", args.output)
+        require_true("resetOutputCtm", args.output)
         return
 
     encoded = ",".join(format(value, ".17g") for value in args.matrix)
-    token = qdbus("beginOutputCtmTest", args.output, encoded, args.timeout)
+    server_timeout = args.timeout if args.force else args.timeout + 5
+    token = qdbus("beginOutputCtmTest", args.output, encoded, server_timeout)
+    try:
+        wait_until_applied(args.output)
+    except SystemExit:
+        require_true("cancelOutputCtmTest", token)
+        raise
     if args.force:
-        qdbus("confirmOutputCtmTest", token)
+        require_true("confirmOutputCtmTest", token)
         return
-    print(f"Keep this matrix? [y/N] (reverting in {args.timeout} seconds): ", end="", flush=True)
+    print(f"Keep this matrix? [y/N] ({args.timeout}-second decision window): ", end="", flush=True)
     try:
         ready, _, _ = select.select([sys.stdin], [], [], args.timeout)
         answer = sys.stdin.readline() if ready else ""
     except (EOFError, KeyboardInterrupt):
         answer = ""
     if answer.strip().lower() in ("y", "yes"):
-        qdbus("confirmOutputCtmTest", token)
+        require_true("confirmOutputCtmTest", token)
     else:
-        qdbus("cancelOutputCtmTest", token)
+        require_true("cancelOutputCtmTest", token)
 
 
 if __name__ == "__main__":

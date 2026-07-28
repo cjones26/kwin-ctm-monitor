@@ -6,19 +6,26 @@ repo="$state/repository/current"
 gnupg="$state/gnupg"
 keyring=/usr/share/keyrings/kwin-ctm-monitor.gpg
 
-install -d -m 0755 "$state" /var/cache/kwin-ctm-monitor /run/kwin-ctm-monitor
+install -d -m 0755 "$state" /var/cache/kwin-ctm-monitor
 install -d -m 0700 "$gnupg"
 
-if ! modprobe vkms; then
-    echo "kwin-ctm-monitor: unable to load vkms; builds will fail closed until VKMS is available" >&2
-fi
-
-if ! gpg --homedir "$gnupg" --list-secret-keys kwin-ctm-monitor >/dev/null 2>&1; then
+fingerprint="$(gpg --homedir "$gnupg" --batch --with-colons --list-secret-keys |
+    awk -F: '$1 == "fpr" { print $10; exit }')"
+if [ -z "$fingerprint" ]; then
     gpg --homedir "$gnupg" --batch --pinentry-mode loopback --passphrase '' --quick-generate-key \
         'KWin CTM Monitor <local@kwin-ctm.invalid>' ed25519 sign 0
+    fingerprint="$(gpg --homedir "$gnupg" --batch --with-colons --list-secret-keys |
+        awk -F: '$1 == "fpr" { print $10; exit }')"
 fi
-gpg --homedir "$gnupg" --batch --export kwin-ctm-monitor > "$keyring"
+[ -n "$fingerprint" ]
+gpg --homedir "$gnupg" --batch --export "$fingerprint" > "$keyring"
+[ -s "$keyring" ]
 chmod 0644 "$keyring"
+
+# 0.1.15 stopped shipping this global KDE autostart file. Remove copies
+# left behind by older monitor packages; CTM restore is now an explicit
+# command, not login-time policy.
+rm -f /etc/xdg/autostart/kwin-ctm-restore.desktop
 
 if [ -f "$repo/dists/stable/InRelease" ]; then
     enabled=yes
@@ -35,8 +42,8 @@ Signed-By: $keyring
 Enabled: $enabled
 EOF
 
-touch "$state/rebuild-requested"
-deb-systemd-helper enable kwin-ctm-monitor.path >/dev/null || true
-deb-systemd-invoke start kwin-ctm-monitor.path >/dev/null || true
+#DEBHELPER#
+
+systemctl start --no-block kwin-ctm-monitor.service >/dev/null 2>&1 || true
 
 exit 0

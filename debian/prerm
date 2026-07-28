@@ -1,9 +1,6 @@
 #!/bin/sh
 set -eu
 
-if [ "$1" = remove ] || [ "$1" = deconfigure ]; then
-    deb-systemd-invoke stop kwin-ctm-monitor.path >/dev/null 2>&1 || true
-    deb-systemd-helper disable kwin-ctm-monitor.path >/dev/null 2>&1 || true
-fi
+#DEBHELPER#
 
 exit 0

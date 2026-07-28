@@ -9,7 +9,6 @@ import contextlib
 import fcntl
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -29,6 +28,7 @@ DRM_CLASS = Path("/sys/class/drm")
 LOCAL_SOURCE = Path("/etc/apt/sources.list.d/kwin-ctm-monitor.sources")
 
 PACKAGES = ("kwin-wayland", "kwin-common", "kwin-data", "kwin-dev")
+LOCAL_VERSION_SUFFIX = "local1"
 
 
 class MonitorError(RuntimeError):
@@ -41,11 +41,11 @@ def run(args: list[str], *, cwd: Path | None = None, capture: bool = False) -> s
         cwd=cwd,
         text=True,
         stdout=subprocess.PIPE if capture else None,
-        stderr=subprocess.STDOUT if capture else None,
+        stderr=subprocess.PIPE if capture else None,
         check=False,
     )
     if proc.returncode:
-        detail = proc.stdout.strip() if proc.stdout else f"exit status {proc.returncode}"
+        detail = (proc.stderr or proc.stdout or f"exit status {proc.returncode}").strip()
         raise MonitorError(f"{' '.join(args)}: {detail}")
     return proc.stdout if proc.stdout else ""
 
@@ -77,8 +77,11 @@ def versions_from_madison() -> list[str]:
     versions = []
     for line in output.splitlines():
         fields = [part.strip() for part in line.split("|")]
-        if len(fields) >= 2 and "zneon" in fields[1] and "+ctm" not in fields[1]:
-            versions.append(fields[1])
+        if len(fields) < 2 or "zneon" not in fields[1]:
+            continue
+        if "+local" in fields[1] or "+ctm" in fields[1]:
+            continue
+        versions.append(fields[1])
     if not versions:
         raise MonitorError("no unpatched KDE neon kwin-wayland version found")
     versions.sort(key=DebianVersion)
@@ -94,14 +97,6 @@ class DebianVersion:
         return result.returncode == 0
 
 
-def upstream_version(package_version: str) -> str:
-    value = package_version.split(":", 1)[-1]
-    match = re.match(r"([0-9]+(?:\.[0-9]+){2})-", value)
-    if not match:
-        raise MonitorError(f"cannot derive KWin tag from {package_version!r}")
-    return match.group(1)
-
-
 def already_published(version: str) -> bool:
     if not STATUS.exists():
         return False
@@ -109,7 +104,11 @@ def already_published(version: str) -> bool:
         data = json.loads(STATUS.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
-    return data.get("state") == "published" and data.get("neon_version") == version
+    return (
+        data.get("state") == "published"
+        and data.get("neon_version") == version
+        and data.get("local_version") == f"{version}+{LOCAL_VERSION_SUFFIX}"
+    )
 
 
 @contextlib.contextmanager
@@ -137,25 +136,30 @@ def prepare_source(work: Path, version: str) -> Path:
     return source
 
 
-def find_vkms_node(drm_class: Path = DRM_CLASS, dev_root: Path = Path("/dev/dri")) -> Path:
-    """Return the VKMS primary node, identified by its kernel driver."""
-    for card in sorted(drm_class.glob("card[0-9]*")):
-        device = card / "device"
-        driver = device / "driver"
+def find_gpu_nodes(drm_class: Path = DRM_CLASS, dev_root: Path = Path("/dev/dri")) -> tuple[Path, Path]:
+    """Return primary and render nodes for the same non-virtual GPU."""
+    for render in sorted(drm_class.glob("renderD[0-9]*")):
+        device = render / "device"
         try:
-            device_name = device.resolve(strict=True).name
-            driver_name = driver.resolve(strict=True).name
+            resolved_device = device.resolve(strict=True)
+            driver_name = (device / "driver").resolve(strict=True).name
         except OSError:
             continue
-        if device_name != "vkms" or driver_name != "faux_driver":
+        if driver_name == "faux_driver":
             continue
-        node = dev_root / card.name
-        if node.exists() and node.is_char_device():
-            return node
-    raise MonitorError("VKMS DRM node not found; verify that the vkms module is loaded")
+        render_node = dev_root / render.name
+        for card in sorted(drm_class.glob("card[0-9]*")):
+            try:
+                same_device = (card / "device").resolve(strict=True) == resolved_device
+            except OSError:
+                continue
+            primary_node = dev_root / card.name
+            if same_device and primary_node.is_char_device() and render_node.is_char_device():
+                return primary_node, render_node
+    raise MonitorError("no physical DRM device with primary and render nodes found")
 
 
-def build_in_docker(source: Path, output: Path, image: str, vkms_node: Path, local_version: str) -> None:
+def build_in_docker(source: Path, output: Path, image: str, primary_node: Path, render_node: Path, local_version: str) -> None:
     output.mkdir(parents=True, exist_ok=True)
     script = r"""
 set -eu
@@ -164,10 +168,12 @@ cp /host/neon.sources /etc/apt/sources.list.d/neon.sources
 mkdir -p /etc/apt/keyrings
 cp /host/neon-archive-keyring.asc /etc/apt/keyrings/neon-archive-keyring.asc
 apt-get update
-apt-get install -y --no-install-recommends build-essential ca-certificates dbus-x11 debhelper devscripts equivs git pkg-kde-tools-neon x11-utils xauth xvfb
+apt-get install -y --no-install-recommends build-essential ca-certificates dbus-x11 debhelper devscripts equivs g++-14 gcc-14 git pkg-kde-tools-neon x11-utils xauth xvfb
 cd "/build/$SOURCE_BASENAME"
 export DEBEMAIL=local@kwin-ctm.invalid
 export DEBFULLNAME='KWin CTM Monitor'
+export CC=/usr/bin/gcc-14
+export CXX=/usr/bin/g++-14
 dch --newversion "$LOCAL_VERSION" 'Apply configurable per-output SDR CTM support.'
 mk-build-deps --install --remove --tool 'apt-get -y --no-install-recommends' debian/control
 
@@ -217,7 +223,8 @@ cp /build/*.deb /out/
         "-e", "CI=1",
         "-e", f"SOURCE_BASENAME={source.name}",
         "-e", f"LOCAL_VERSION={local_version}",
-        "--device", f"{vkms_node}:/dev/dri/card1",
+        "--device", f"{primary_node}:/dev/dri/card1",
+        "--device", f"{render_node}:/dev/dri/renderD128",
         "-v", f"{source.parent}:/build",
         "-v", f"{output}:/out",
         "-v", f"{NEON_SOURCES}:/host/neon.sources:ro",
@@ -237,7 +244,7 @@ def validate_packages(output: Path, local_version: str) -> None:
         names.add(name)
         if version != local_version:
             raise MonitorError(f"{deb.name} has unexpected version {version}")
-    missing = {"kwin-wayland", "kwin-common"} - names
+    missing = set(PACKAGES) - names
     if missing:
         raise MonitorError(f"build missing required packages: {', '.join(sorted(missing))}")
 
@@ -258,20 +265,25 @@ def enable_local_repository(source_file: Path = LOCAL_SOURCE) -> None:
         raise MonitorError(f"cannot enable local APT source: {exc}") from exc
 
 
-def publish(output: Path, version: str, config: dict[str, str]) -> None:
-    builds = STATE / "builds"
-    builds.mkdir(parents=True, exist_ok=True)
-    destination = builds / version.replace(":", "_")
-    if destination.exists():
-        shutil.rmtree(destination)
-    shutil.copytree(output, destination)
+def make_repository_readable(root: Path) -> None:
+    """Make a published APT tree traversable by the unprivileged _apt user."""
+    os.chmod(root, 0o755)
+    for path in root.rglob("*"):
+        os.chmod(path, 0o755 if path.is_dir() else 0o644)
 
-    keep = int(config.get("KEEP_SUCCESSFUL_BUILDS", "2"))
-    retained = sorted((path for path in builds.iterdir() if path.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True)[:keep]
-    for stale in set(builds.iterdir()) - set(retained):
-        if stale.is_dir():
-            shutil.rmtree(stale)
 
+def repository_is_valid(repository: Path) -> bool:
+    try:
+        packages = (repository / "dists" / "stable" / "main" / "binary-amd64" / "Packages").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    stanzas = [stanza for stanza in packages.strip().split("\n\n") if stanza]
+    return bool(stanzas) and all(stanza.startswith("Package: ") for stanza in stanzas)
+
+
+def publish_repository(retained: list[Path]) -> None:
+    if not retained:
+        raise MonitorError("no successful builds available for repository publication")
     repository_root = STATE / "repository"
     repository_root.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix="staging-", dir=repository_root))
@@ -296,16 +308,33 @@ def publish(output: Path, version: str, config: dict[str, str]) -> None:
     gnupg = STATE / "gnupg"
     run(["gpg", "--homedir", str(gnupg), "--batch", "--yes", "--armor", "--detach-sign", "-o", str(release_path) + ".gpg", str(release_path)])
     run(["gpg", "--homedir", str(gnupg), "--batch", "--yes", "--clearsign", "-o", str(release_path.parent / "InRelease"), str(release_path)])
+    make_repository_readable(staging)
 
     link = repository_root / "current"
     temporary_link = repository_root / ".current-new"
     temporary_link.unlink(missing_ok=True)
     temporary_link.symlink_to(staging.name)
     os.replace(temporary_link, link)
-    for old in repository_root.glob("staging-*"):
-        if old != staging and not (link.is_symlink() and link.resolve() == old.resolve()):
-            shutil.rmtree(old)
+    generations = sorted(repository_root.glob("staging-*"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for old in generations[2:]:
+        shutil.rmtree(old)
     enable_local_repository()
+
+
+def publish(output: Path, version: str, config: dict[str, str]) -> None:
+    builds = STATE / "builds"
+    builds.mkdir(parents=True, exist_ok=True)
+    destination = builds / version.replace(":", "_")
+    if destination.exists():
+        shutil.rmtree(destination)
+    shutil.copytree(output, destination)
+
+    keep = int(config.get("KEEP_SUCCESSFUL_BUILDS", "2"))
+    retained = sorted((path for path in builds.iterdir() if path.is_dir()), key=lambda p: p.stat().st_mtime, reverse=True)[:keep]
+    for stale in set(builds.iterdir()) - set(retained):
+        if stale.is_dir():
+            shutil.rmtree(stale)
+    publish_repository(retained)
 
 
 def build() -> None:
@@ -315,8 +344,26 @@ def build() -> None:
     with exclusive_lock():
         version = versions_from_madison()[-1]
         if already_published(version):
+            repository = STATE / "repository" / "current"
+            if not repository.is_dir():
+                raise MonitorError("published repository is missing")
+            if repository_is_valid(repository):
+                make_repository_readable(repository.resolve())
+            else:
+                builds = STATE / "builds"
+                retained = sorted(
+                    (path for path in builds.iterdir() if path.is_dir()),
+                    key=lambda path: path.stat().st_mtime,
+                    reverse=True,
+                )[:int(config.get("KEEP_SUCCESSFUL_BUILDS", "2"))]
+                publish_repository(retained)
             enable_local_repository()
-            write_status("published", neon_version=version, message="already current")
+            write_status(
+                "published",
+                neon_version=version,
+                local_version=f"{version}+{LOCAL_VERSION_SUFFIX}",
+                message="already current",
+            )
             return
         write_status("building", neon_version=version)
         CACHE.mkdir(parents=True, exist_ok=True)
@@ -324,9 +371,16 @@ def build() -> None:
             work = Path(temporary)
             source = prepare_source(work, version)
             output = work / "packages"
-            local_version = f"{version}+ctm1"
-            vkms_node = find_vkms_node()
-            build_in_docker(source, output, config.get("BUILD_IMAGE", "ubuntu:24.04"), vkms_node, local_version)
+            local_version = f"{version}+{LOCAL_VERSION_SUFFIX}"
+            primary_node, render_node = find_gpu_nodes()
+            build_in_docker(
+                source,
+                output,
+                config.get("BUILD_IMAGE", "ubuntu:24.04"),
+                primary_node,
+                render_node,
+                local_version,
+            )
             validate_packages(output, local_version)
             publish(output, local_version, config)
         write_status("published", neon_version=version, local_version=local_version)

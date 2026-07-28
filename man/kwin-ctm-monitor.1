@@ -1,4 +1,4 @@
-.TH KWIN-CTM-MONITOR 1 "July 2026" "kwin-ctm-monitor 0.1.2" "User Commands"
+.TH KWIN-CTM-MONITOR 1 "July 2026" "kwin-ctm-monitor 0.1.17" "User Commands"
 .SH NAME
 kwin-ctm-monitor \- build and publish locally patched KDE neon KWin packages
 .SH SYNOPSIS
@@ -6,7 +6,7 @@ kwin-ctm-monitor \- build and publish locally patched KDE neon KWin packages
 .BR status | check | build
 .SH DESCRIPTION
 The monitor detects a new KDE neon KWin source version, applies the packaged
-CTM patch, validates it against VKMS in Docker, and publishes signed packages
+CTM patch, validates it with MockDrm in Docker, and publishes signed packages
 to a machine-local APT repository. It never installs KWin packages.
 .SH COMMANDS
 .TP
@@ -26,9 +26,5 @@ Monitor configuration.
 .TP
 .I /var/lib/kwin-ctm-monitor
 Status, signing key, retained builds, and signed APT repository.
-.TP
-.I /usr/lib/modules-load.d/kwin-ctm-monitor.conf
-Persistent VKMS module configuration.
 .SH SEE ALSO
-.BR kwinctmctl (1),
-.BR systemd.path (5)
+.BR kwinctmctl (1)

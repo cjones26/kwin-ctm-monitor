@@ -1,3 +1,144 @@
+kwin-ctm-monitor (0.1.17-1) unstable; urgency=medium
+
+  * Use +local1 for rebuilt KWin package versions instead of another ctmN
+    suffix. Keep filtering older +ctm packages so the monitor does not treat
+    its own local repository as upstream Neon input.
+  * Document the local user services used to reapply CTM after Wayland login
+    and screen unlock on this workstation.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Tue, 28 Jul 2026 16:45:00 -0400
+
+kwin-ctm-monitor (0.1.16-1) unstable; urgency=medium
+
+  * Remove the obsolete global kwinctmctl-restore KDE autostart file during
+    package configuration. Older packages installed it under /etc, so simply
+    dropping it from debian/install is not enough on already-upgraded systems.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 19 Jul 2026 21:20:00 -0400
+
+kwin-ctm-monitor (0.1.15-1) unstable; urgency=medium
+
+  * Stop installing a global KDE autostart entry for kwinctmctl-restore.
+    Login-time restore is too early on plasmalogin systems and can leave the
+    session at a black screen with only the cursor visible.
+  * Keep kwinctmctl-restore as an explicit manual command for users who want
+    to reapply saved matrices after a Wayland session is already usable.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 19 Jul 2026 21:00:00 -0400
+
+kwin-ctm-monitor (0.1.14-1) unstable; urgency=medium
+
+  * Adapt the drm_output.cpp helper insertion hunk to KWin 6.7.3's
+    environmentVariableBoolValue-based triple-buffering code.
+  * Drop a cosmetic constructor blank-line change from the downstream patch.
+  * Rev the downstream KWin packages to ctm7.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Thu, 16 Jul 2026 13:20:00 -0400
+
+kwin-ctm-monitor (0.1.13-1) unstable; urgency=medium
+
+  * Adapt the CTM hardware-test commit call to KWin 6.7.2's
+    DrmPipeline::commitPipelines signature.
+  * Rev the downstream KWin packages to ctm6.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Mon, 13 Jul 2026 16:30:00 -0400
+
+kwin-ctm-monitor (0.1.12-1) unstable; urgency=medium
+
+  * Fix testCustomCtmLifecycle: the hardware test-and-commit inside
+    tryKmsColorOffloading only runs once the pipeline has an active,
+    presented frame, so a bare queueChanges/applyQueuedChanges call in this
+    harness legitimately stays at Testing rather than reaching Active
+    (matches the same gap noted by testModeset's own QSKIP). The 0.1.11-1
+    build predates this fix and fails during its KWin test run.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Mon, 06 Jul 2026 17:30:00 -0400
+
+kwin-ctm-monitor (0.1.11-1) unstable; urgency=medium
+
+  * Stop restoring a persisted CTM automatically during output setup; a
+    matrix is only ever applied interactively against a running session.
+  * Remove the frame-presented gating (AwaitingFrame/DrmOutputCtmFeedback):
+    it fired immediately during plasmalogin's compositor-reused handoff and
+    protected nothing.
+  * Set CustomSdrCtmStatus::Active synchronously right after a successful
+    hardware test, matching how every other color decision in this function
+    already works.
+  * Add kwinctmctl-restore, an autostart script that reapplies the last
+    confirmed matrix a few seconds after a Wayland session starts, using the
+    same interactive path that has always worked reliably.
+  * Rev the downstream KWin packages to ctm5.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Mon, 06 Jul 2026 17:00:00 -0400
+
+kwin-ctm-monitor (0.1.10-1) unstable; urgency=medium
+
+  * Defer persisted CTMs until KWin presents a working identity frame.
+  * Confirm CTM activation only after its exact output frame is presented.
+  * Reject failed CTM presentations and retry with the identity pipeline.
+  * Report CTM lifecycle state through D-Bus and the CLI.
+  * Add focused DRM lifecycle coverage.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Mon, 06 Jul 2026 14:30:00 -0400
+
+kwin-ctm-monitor (0.1.9-1) unstable; urgency=medium
+
+  * Start the static monitor service explicitly after systemd reloads its unit.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Mon, 06 Jul 2026 11:15:00 -0400
+
+kwin-ctm-monitor (0.1.8-1) unstable; urgency=medium
+
+  * Keep persisted CTMs out of KWin's initial modeset validation.
+  * Restore the identity hardware pipeline if a persisted CTM is rejected.
+  * Share matrix validation between D-Bus and configuration loading.
+  * Add CTM-specific patch contract and KWin validation tests.
+  * Keep official Neon KWin packages available as a recovery candidate.
+  * Use the APT hook as the single automatic build trigger.
+  * Preserve local_version when the published build is already current.
+  * Validate the complete patched KWin package set before publication.
+  * Keep one previous repository generation during atomic publication.
+  * Create the volatile service runtime directory through systemd.
+  * Configure KWin with GCC 14 before the first CMake invocation.
+  * Let debhelper reload and start the systemd unit during package upgrades.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 05 Jul 2026 20:00:00 -0400
+
+kwin-ctm-monitor (0.1.7-1) unstable; urgency=medium
+
+  * Keep the custom matrix isolated from KWin's ICC and VCGT operations.
+  * Rev the downstream KWin packages to ctm2 when patch semantics change.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 05 Jul 2026 15:45:00 -0400
+
+kwin-ctm-monitor (0.1.6-1) unstable; urgency=medium
+
+  * Stop loading and persisting VKMS on the host.
+  * Use matching physical DRM primary and render nodes for container tests.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 05 Jul 2026 15:15:00 -0400
+
+kwin-ctm-monitor (0.1.5-1) unstable; urgency=medium
+
+  * Keep command diagnostics out of generated APT metadata.
+  * Regenerate invalid repository metadata without rebuilding KWin.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 05 Jul 2026 15:00:00 -0400
+
+kwin-ctm-monitor (0.1.4-1) unstable; urgency=medium
+
+  * Select and export the repository signing key by fingerprint.
+  * Trigger checks once after APT refresh instead of watching every list change.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 05 Jul 2026 14:45:00 -0400
+
+kwin-ctm-monitor (0.1.3-1) unstable; urgency=medium
+
+  * Publish the local APT repository with permissions usable by _apt.
+  * Repair permissions on an existing repository during routine checks.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Sun, 05 Jul 2026 14:30:00 -0400
+
 kwin-ctm-monitor (0.1.2-1) unstable; urgency=medium
 
   * Keep Debian source-build tooling inside the Docker build environment.

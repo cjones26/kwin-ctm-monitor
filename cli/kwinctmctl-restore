@@ -1,0 +1,48 @@
+#!/usr/bin/python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+"""Reapply confirmed per-output SDR CTMs in a running Wayland session.
+
+KWin never restores a persisted CTM automatically during output setup (see
+custom-output-ctm.patch); a matrix is only ever applied through kwinctmctl
+against an already-running session. This command runs the same path non-
+interactively, using the last confirmed matrix for each output from
+kwinoutputconfig.json.
+"""
+
+import json
+import os
+import subprocess
+
+CONFIG = os.path.expanduser("~/.config/kwinoutputconfig.json")
+
+
+def find_saved_ctms(node):
+    if isinstance(node, dict):
+        uuid = node.get("uuid")
+        matrix = node.get("customSdrCtm")
+        if isinstance(uuid, str) and isinstance(matrix, list) and len(matrix) == 9:
+            yield uuid, matrix
+        for value in node.values():
+            yield from find_saved_ctms(value)
+    elif isinstance(node, list):
+        for item in node:
+            yield from find_saved_ctms(item)
+
+
+def main() -> int:
+    if os.environ.get("XDG_SESSION_TYPE") != "wayland":
+        return 0
+    try:
+        data = json.loads(open(CONFIG, encoding="utf-8").read())
+    except (OSError, json.JSONDecodeError):
+        return 0
+    saved = list(find_saved_ctms(data))
+    if not saved:
+        return 0
+    for uuid, matrix in saved:
+        subprocess.run(["kwinctmctl", "set", uuid, *map(str, matrix), "--force"], check=False)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

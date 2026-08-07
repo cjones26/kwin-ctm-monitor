@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+
+config=/etc/kwin-ctm-monitor.conf
+unit=kwin-ctm-monitor.service
+
+read_config_value() {
+    key=$1
+    sed -n "s/^[[:space:]]*${key}[[:space:]]*=[[:space:]]*//p" "$config" 2>/dev/null \
+        | tail -n 1 \
+        | sed "s/[[:space:]]*$//; s/^\"//; s/\"$//; s/^'//; s/'$//"
+}
+
+recipient=$(read_config_value ALERT_EMAIL)
+
+if [ -z "$recipient" ]; then
+    logger -t kwin-ctm-monitor "build failed; ALERT_EMAIL is not configured"
+    exit 0
+fi
+
+subject="KWin CTM rebuild failed on $(hostname)"
+status=$(kwin-ctm-monitor status 2>&1 || true)
+journal=$(journalctl -u "$unit" -n 200 --no-pager 2>&1 || true)
+
+body=$(mktemp)
+trap 'rm -f "$body"' EXIT
+
+{
+    printf '%s\n\n' "$subject"
+    printf 'The local KWin CTM rebuild failed. The installed KWin package was not changed by this failure.\n\n'
+    printf 'Status:\n%s\n\n' "$status"
+    printf 'Recent journal:\n%s\n' "$journal"
+} > "$body"
+
+if command -v sendmail >/dev/null 2>&1; then
+    {
+        printf 'To: %s\n' "$recipient"
+        printf 'Subject: %s\n' "$subject"
+        printf 'Content-Type: text/plain; charset=UTF-8\n'
+        printf '\n'
+        cat "$body"
+    } | sendmail -t
+elif command -v mail >/dev/null 2>&1; then
+    mail -s "$subject" "$recipient" < "$body"
+elif command -v mailx >/dev/null 2>&1; then
+    mailx -s "$subject" "$recipient" < "$body"
+else
+    logger -t kwin-ctm-monitor "build failed; no sendmail, mail, or mailx command is installed"
+    exit 0
+fi
+
+logger -t kwin-ctm-monitor "sent build failure alert to $recipient"

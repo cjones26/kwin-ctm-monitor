@@ -11,6 +11,7 @@ Package: kwin-ctm-monitor
 Architecture: all
 Depends: ${misc:Depends}, apt-utils, docker.io | docker-ce, dpkg-dev, gnupg,
  patch, python3
+Suggests: default-mta | mail-transport-agent, bsd-mailx | mailutils
 Description: Preserve a configurable KWin CTM patch across KDE neon updates
  Watches APT metadata, builds a matching patched KWin in an isolated container,
  and publishes validated packages to a signed local APT repository. It does not

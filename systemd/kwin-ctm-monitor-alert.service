@@ -1,0 +1,7 @@
+[Unit]
+Description=Send KWin CTM build failure email
+ConditionPathExists=/etc/kwin-ctm-monitor.conf
+
+[Service]
+Type=oneshot
+ExecStart=/usr/libexec/kwin-ctm-monitor/kwin-ctm-monitor-alert

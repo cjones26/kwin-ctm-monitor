@@ -4,6 +4,7 @@ After=network-online.target docker.service
 Wants=network-online.target
 Requires=docker.service
 ConditionPathExists=/etc/kwin-ctm-monitor.conf
+OnFailure=kwin-ctm-monitor-alert.service
 
 [Service]
 Type=oneshot

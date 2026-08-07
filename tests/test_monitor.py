@@ -169,6 +169,24 @@ class PackagingTests(unittest.TestCase):
         service = (MODULE_PATH.parents[1] / "systemd" / "kwin-ctm-monitor.service").read_text(encoding="utf-8")
         self.assertIn("RuntimeDirectory=kwin-ctm-monitor", service)
 
+    def test_build_failures_can_send_configured_email_alerts(self):
+        root = MODULE_PATH.parents[1]
+        config = (root / "config" / "kwin-ctm-monitor.conf").read_text(encoding="utf-8")
+        install = (root / "debian" / "install").read_text(encoding="utf-8")
+        service = (root / "systemd" / "kwin-ctm-monitor.service").read_text(encoding="utf-8")
+        alert_service = (root / "systemd" / "kwin-ctm-monitor-alert.service").read_text(encoding="utf-8")
+        alert = (root / "bin" / "kwin-ctm-monitor-alert").read_text(encoding="utf-8")
+
+        self.assertIn("ALERT_EMAIL=", config)
+        self.assertIn("OnFailure=kwin-ctm-monitor-alert.service", service)
+        self.assertIn("kwin-ctm-monitor-alert usr/libexec/kwin-ctm-monitor", install)
+        self.assertIn("kwin-ctm-monitor-alert.service lib/systemd/system", install)
+        self.assertIn("ExecStart=/usr/libexec/kwin-ctm-monitor/kwin-ctm-monitor-alert", alert_service)
+        self.assertNotIn("ProtectSystem=strict", alert_service)
+        self.assertIn("read_config_value ALERT_EMAIL", alert)
+        self.assertIn("sendmail -t", alert)
+        self.assertIn('journalctl -u "$unit" -n 200 --no-pager', alert)
+
 
 class PatchContractTests(unittest.TestCase):
     @classmethod

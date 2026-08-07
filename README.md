@@ -154,6 +154,34 @@ watch -n 10 kwin-ctm-monitor status
 A successful run ends with `"state": "published"`. Only then does the service
 change the local source from `Enabled: no` to `Enabled: yes`.
 
+### Build failure email
+
+The monitor can send mail when a rebuild fails. This is useful when a Neon KWin
+update lands but the local patch no longer applies or no longer builds.
+
+Set `ALERT_EMAIL` in `/etc/kwin-ctm-monitor.conf`.
+
+```bash
+sudoedit /etc/kwin-ctm-monitor.conf
+```
+
+```text
+ALERT_EMAIL=you@example.com
+```
+
+The alert runs through `kwin-ctm-monitor-alert.service`, started by
+`OnFailure=` from the build service. The build still fails normally in systemd,
+and APT remains non-blocking. The email includes `kwin-ctm-monitor status` and
+the last 200 journal lines from `kwin-ctm-monitor.service`.
+
+This package does not force a mail transport agent onto the machine. Install
+and configure one separately, then test the alert path.
+
+```bash
+sudo systemctl start kwin-ctm-monitor-alert.service
+journalctl -u kwin-ctm-monitor-alert.service -n 50 --no-pager
+```
+
 ## Install the patched KWin
 
 Refresh PackageKit and inspect the candidate.

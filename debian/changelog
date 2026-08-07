@@ -1,3 +1,9 @@
+kwin-ctm-monitor (0.1.18-1) unstable; urgency=medium
+
+  * Send optional email alerts when the local KWin rebuild fails.
+
+ -- Charles Jones <charles.jones@valencesoftware.io>  Thu, 06 Aug 2026 12:00:00 -0400
+
 kwin-ctm-monitor (0.1.17-1) unstable; urgency=medium
 
   * Use +local1 for rebuilt KWin package versions instead of another ctmN
